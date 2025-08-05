@@ -1,253 +1,229 @@
-import type { Node, Edge } from "reactflow"
+import type { Edge, Node } from "@xyflow/react"
 
-export interface HighlightConfig {
-  selectedNodeId?: string
-  highlightColor?: string
-  dimmedOpacity?: number
-  highlightOpacity?: number
-}
-
-export interface HighlightedElements {
-  nodes: Node[]
-  edges: Edge[]
+/**
+ * Represents the result of highlighting calculations
+ */
+export interface HighlightingResult {
+  /** Set of node IDs that should be highlighted */
+  highlightedNodes: Set<string>
+  /** Set of edge IDs that should be highlighted */
+  highlightedEdges: Set<string>
 }
 
 /**
- * Highlights the selected node and its connected elements while dimming others
- * @param nodes - Array of all nodes in the flow
- * @param edges - Array of all edges in the flow
- * @param config - Configuration for highlighting behavior
- * @returns Updated nodes and edges with highlighting applied
+ * Configuration options for highlighting behavior
  */
-export function applyNodeHighlighting(nodes: Node[], edges: Edge[], config: HighlightConfig = {}): HighlightedElements {
-  const { selectedNodeId, highlightColor = "#3b82f6", dimmedOpacity = 0.3, highlightOpacity = 1.0 } = config
+export interface HighlightingConfig {
+  /** Opacity for non-highlighted elements when a selection is active */
+  dimmedOpacity: number
+  /** Opacity for highlighted elements */
+  highlightedOpacity: number
+  /** Stroke width for highlighted edges */
+  highlightedStrokeWidth: number
+  /** Stroke width for normal edges */
+  normalStrokeWidth: number
+  /** Color for highlighted edges */
+  highlightedEdgeColor: string
+  /** Color for normal edges */
+  normalEdgeColor: string
+}
 
+/**
+ * Default configuration for highlighting
+ */
+export const DEFAULT_HIGHLIGHTING_CONFIG: HighlightingConfig = {
+  dimmedOpacity: 0.3,
+  highlightedOpacity: 1,
+  highlightedStrokeWidth: 3,
+  normalStrokeWidth: 2,
+  highlightedEdgeColor: "#3b82f6",
+  normalEdgeColor: "#6b7280",
+}
+
+/**
+ * Calculates which nodes and edges should be highlighted based on the selected node
+ *
+ * @param selectedNodeId - The ID of the currently selected node, or null if none selected
+ * @param edges - Array of all edges in the flow diagram
+ * @returns HighlightingResult containing sets of highlighted node and edge IDs
+ *
+ * @example
+ * ```typescript
+ * const result = calculateHighlighting("node-1", edges);
+ * console.log(result.highlightedNodes); // Set containing "node-1" and connected nodes
+ * console.log(result.highlightedEdges); // Set containing edges connected to "node-1"
+ * ```
+ */
+export function calculateHighlighting(selectedNodeId: string | null, edges: Edge[]): HighlightingResult {
+  // If no node is selected, return empty sets (no highlighting)
   if (!selectedNodeId) {
-    // No selection - return all elements with full opacity
     return {
-      nodes: nodes.map((node) => ({
-        ...node,
-        style: {
-          ...node.style,
-          opacity: highlightOpacity,
-        },
-      })),
-      edges: edges.map((edge) => ({
-        ...edge,
-        style: {
-          ...edge.style,
-          opacity: highlightOpacity,
-        },
-      })),
+      highlightedNodes: new Set(),
+      highlightedEdges: new Set(),
     }
   }
 
-  // Find connected node IDs
-  const connectedNodeIds = getConnectedNodeIds(selectedNodeId, edges)
-  const allHighlightedIds = new Set([selectedNodeId, ...connectedNodeIds])
+  // Initialize sets with the selected node
+  const highlightedNodes = new Set<string>([selectedNodeId])
+  const highlightedEdges = new Set<string>()
 
-  // Apply highlighting to nodes
-  const highlightedNodes = nodes.map((node) => {
-    const isHighlighted = allHighlightedIds.has(node.id)
-    const isSelected = node.id === selectedNodeId
+  // Find all edges connected to the selected node
+  edges.forEach((edge) => {
+    const isConnectedToSelected = edge.source === selectedNodeId || edge.target === selectedNodeId
+
+    if (isConnectedToSelected) {
+      // Add the edge to highlighted edges
+      highlightedEdges.add(edge.id)
+
+      // Add both source and target nodes to highlighted nodes
+      highlightedNodes.add(edge.source)
+      highlightedNodes.add(edge.target)
+    }
+  })
+
+  return {
+    highlightedNodes,
+    highlightedEdges,
+  }
+}
+
+/**
+ * Applies highlighting styles to nodes based on the highlighting result
+ *
+ * @param nodes - Array of nodes to style
+ * @param highlightingResult - Result from calculateHighlighting
+ * @param selectedNodeId - Currently selected node ID
+ * @param config - Highlighting configuration options
+ * @returns Array of nodes with updated styles
+ *
+ * @example
+ * ```typescript
+ * const styledNodes = applyNodeHighlighting(
+ *   nodes,
+ *   highlightingResult,
+ *   "node-1",
+ *   DEFAULT_HIGHLIGHTING_CONFIG
+ * );
+ * ```
+ */
+export function applyNodeHighlighting(
+  nodes: Node[],
+  highlightingResult: HighlightingResult,
+  selectedNodeId: string | null,
+  config: HighlightingConfig = DEFAULT_HIGHLIGHTING_CONFIG,
+): Node[] {
+  return nodes.map((node) => {
+    // Determine opacity based on selection state
+    let opacity = config.highlightedOpacity // Default to full opacity
+
+    if (selectedNodeId) {
+      // If there's a selection, check if this node should be highlighted
+      const isHighlighted = highlightingResult.highlightedNodes.has(node.id)
+      const isBackgroundNode = node.type === "background"
+
+      // Background nodes always stay visible, others are dimmed if not highlighted
+      opacity = isHighlighted || isBackgroundNode ? config.highlightedOpacity : config.dimmedOpacity
+    }
 
     return {
       ...node,
       style: {
         ...node.style,
-        opacity: isHighlighted ? highlightOpacity : dimmedOpacity,
-        borderColor: isSelected ? highlightColor : node.style?.borderColor,
-        borderWidth: isSelected ? 2 : node.style?.borderWidth || 1,
-        boxShadow: isSelected ? `0 0 0 2px ${highlightColor}40` : node.style?.boxShadow,
+        opacity,
       },
-      className:
-        `${node.className || ""} ${isSelected ? "selected-node" : ""} ${isHighlighted ? "highlighted-node" : "dimmed-node"}`.trim(),
     }
   })
+}
 
-  // Apply highlighting to edges
-  const highlightedEdges = edges.map((edge) => {
-    const isConnected = edge.source === selectedNodeId || edge.target === selectedNodeId
+/**
+ * Applies highlighting styles to edges based on the highlighting result
+ *
+ * @param edges - Array of edges to style
+ * @param highlightingResult - Result from calculateHighlighting
+ * @param selectedNodeId - Currently selected node ID
+ * @param config - Highlighting configuration options
+ * @returns Array of edges with updated styles and animation
+ *
+ * @example
+ * ```typescript
+ * const styledEdges = applyEdgeHighlighting(
+ *   edges,
+ *   highlightingResult,
+ *   "node-1",
+ *   DEFAULT_HIGHLIGHTING_CONFIG
+ * );
+ * ```
+ */
+export function applyEdgeHighlighting(
+  edges: Edge[],
+  highlightingResult: HighlightingResult,
+  selectedNodeId: string | null,
+  config: HighlightingConfig = DEFAULT_HIGHLIGHTING_CONFIG,
+): Edge[] {
+  return edges.map((edge) => {
+    const isHighlighted = highlightingResult.highlightedEdges.has(edge.id)
+
+    // Determine styling based on highlight state
+    const strokeWidth = isHighlighted ? config.highlightedStrokeWidth : config.normalStrokeWidth
+
+    const strokeColor = isHighlighted ? config.highlightedEdgeColor : config.normalEdgeColor
+
+    const opacity = selectedNodeId
+      ? isHighlighted
+        ? config.highlightedOpacity
+        : config.dimmedOpacity
+      : config.highlightedOpacity
 
     return {
       ...edge,
       style: {
         ...edge.style,
-        opacity: isConnected ? highlightOpacity : dimmedOpacity,
-        stroke: isConnected ? highlightColor : edge.style?.stroke,
-        strokeWidth: isConnected ? 2 : edge.style?.strokeWidth || 1,
+        strokeWidth,
+        stroke: strokeColor,
+        opacity,
       },
-      className: `${edge.className || ""} ${isConnected ? "highlighted-edge" : "dimmed-edge"}`.trim(),
+      // Animate highlighted edges for better visual feedback
+      animated: isHighlighted,
     }
   })
-
-  return {
-    nodes: highlightedNodes,
-    edges: highlightedEdges,
-  }
 }
 
 /**
- * Gets all node IDs that are directly connected to the specified node
- * @param nodeId - The ID of the node to find connections for
- * @param edges - Array of all edges in the flow
- * @returns Array of connected node IDs
+ * Complete highlighting system that combines calculation and styling
+ * This is a convenience function that handles the entire highlighting workflow
+ *
+ * @param nodes - Array of nodes to process
+ * @param edges - Array of edges to process
+ * @param selectedNodeId - Currently selected node ID
+ * @param config - Highlighting configuration options
+ * @returns Object containing styled nodes and edges
+ *
+ * @example
+ * ```typescript
+ * const { styledNodes, styledEdges } = applyCompleteHighlighting(
+ *   nodes,
+ *   edges,
+ *   selectedNodeId,
+ *   customConfig
+ * );
+ * ```
  */
-export function getConnectedNodeIds(nodeId: string, edges: Edge[]): string[] {
-  const connectedIds = new Set<string>()
-
-  edges.forEach((edge) => {
-    if (edge.source === nodeId) {
-      connectedIds.add(edge.target)
-    }
-    if (edge.target === nodeId) {
-      connectedIds.add(edge.source)
-    }
-  })
-
-  return Array.from(connectedIds)
-}
-
-/**
- * Gets all nodes and edges in a path between two nodes
- * @param startNodeId - Starting node ID
- * @param endNodeId - Ending node ID
- * @param edges - Array of all edges in the flow
- * @returns Object containing path node IDs and edge IDs
- */
-export function getPathElements(
-  startNodeId: string,
-  endNodeId: string,
-  edges: Edge[],
-): { nodeIds: string[]; edgeIds: string[] } {
-  const visited = new Set<string>()
-  const pathNodeIds: string[] = []
-  const pathEdgeIds: string[] = []
-
-  function findPath(currentNodeId: string, targetNodeId: string, path: string[]): boolean {
-    if (currentNodeId === targetNodeId) {
-      pathNodeIds.push(...path, currentNodeId)
-      return true
-    }
-
-    if (visited.has(currentNodeId)) {
-      return false
-    }
-
-    visited.add(currentNodeId)
-
-    for (const edge of edges) {
-      if (edge.source === currentNodeId) {
-        if (findPath(edge.target, targetNodeId, [...path, currentNodeId])) {
-          pathEdgeIds.push(edge.id)
-          return true
-        }
-      }
-    }
-
-    return false
-  }
-
-  findPath(startNodeId, endNodeId, [])
-
-  return {
-    nodeIds: [...new Set(pathNodeIds)],
-    edgeIds: [...new Set(pathEdgeIds)],
-  }
-}
-
-/**
- * Resets all highlighting by removing highlight-related styles and classes
- * @param nodes - Array of nodes to reset
- * @param edges - Array of edges to reset
- * @returns Elements with highlighting removed
- */
-export function resetHighlighting(nodes: Node[], edges: Edge[]): HighlightedElements {
-  const resetNodes = nodes.map((node) => ({
-    ...node,
-    style: {
-      ...node.style,
-      opacity: 1,
-      boxShadow: undefined,
-    },
-    className: node.className?.replace(/\b(selected-node|highlighted-node|dimmed-node)\b/g, "").trim(),
-  }))
-
-  const resetEdges = edges.map((edge) => ({
-    ...edge,
-    style: {
-      ...edge.style,
-      opacity: 1,
-    },
-    className: edge.className?.replace(/\b(highlighted-edge|dimmed-edge)\b/g, "").trim(),
-  }))
-
-  return {
-    nodes: resetNodes,
-    edges: resetEdges,
-  }
-}
-
-/**
- * Highlights multiple nodes simultaneously
- * @param nodes - Array of all nodes
- * @param edges - Array of all edges
- * @param selectedNodeIds - Array of node IDs to highlight
- * @param config - Highlighting configuration
- * @returns Elements with multi-node highlighting applied
- */
-export function applyMultiNodeHighlighting(
+export function applyCompleteHighlighting(
   nodes: Node[],
   edges: Edge[],
-  selectedNodeIds: string[],
-  config: HighlightConfig = {},
-): HighlightedElements {
-  const { highlightColor = "#3b82f6", dimmedOpacity = 0.3, highlightOpacity = 1.0 } = config
+  selectedNodeId: string | null,
+  config: HighlightingConfig = DEFAULT_HIGHLIGHTING_CONFIG,
+) {
+  // Calculate which elements should be highlighted
+  const highlightingResult = calculateHighlighting(selectedNodeId, edges)
 
-  if (selectedNodeIds.length === 0) {
-    return resetHighlighting(nodes, edges)
-  }
-
-  // Get all connected nodes for all selected nodes
-  const allConnectedIds = new Set<string>()
-  selectedNodeIds.forEach((nodeId) => {
-    allConnectedIds.add(nodeId)
-    getConnectedNodeIds(nodeId, edges).forEach((id) => allConnectedIds.add(id))
-  })
-
-  const highlightedNodes = nodes.map((node) => {
-    const isHighlighted = allConnectedIds.has(node.id)
-    const isSelected = selectedNodeIds.includes(node.id)
-
-    return {
-      ...node,
-      style: {
-        ...node.style,
-        opacity: isHighlighted ? highlightOpacity : dimmedOpacity,
-        borderColor: isSelected ? highlightColor : node.style?.borderColor,
-        borderWidth: isSelected ? 2 : node.style?.borderWidth || 1,
-      },
-      className:
-        `${node.className || ""} ${isSelected ? "selected-node" : ""} ${isHighlighted ? "highlighted-node" : "dimmed-node"}`.trim(),
-    }
-  })
-
-  const highlightedEdges = edges.map((edge) => {
-    const isConnected = selectedNodeIds.some((nodeId) => edge.source === nodeId || edge.target === nodeId)
-
-    return {
-      ...edge,
-      style: {
-        ...edge.style,
-        opacity: isConnected ? highlightOpacity : dimmedOpacity,
-        stroke: isConnected ? highlightColor : edge.style?.stroke,
-      },
-      className: `${edge.className || ""} ${isConnected ? "highlighted-edge" : "dimmed-edge"}`.trim(),
-    }
-  })
+  // Apply styles to nodes and edges
+  const styledNodes = applyNodeHighlighting(nodes, highlightingResult, selectedNodeId, config)
+  const styledEdges = applyEdgeHighlighting(edges, highlightingResult, selectedNodeId, config)
 
   return {
-    nodes: highlightedNodes,
-    edges: highlightedEdges,
+    styledNodes,
+    styledEdges,
+    highlightingResult, // Also return the calculation result for debugging/inspection
   }
 }
